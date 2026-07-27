@@ -1,0 +1,5 @@
+.DS_Store
+
+# Local workspace only — not part of the published plugin
+demo/
+scripts/
