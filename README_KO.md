@@ -12,7 +12,7 @@ AI Vision Guard는 OpenAI 호환 비전 모델로 멀티모달 채팅의 이미�
 
 1. JSON 채팅 body에서 `messages`의 `image_url`을 수집합니다.
 2. 이미지가 없고 `skip_if_no_image`가 `true`이면 요청을 그대로 통과시킵니다.
-3. 각 이미지(최대 `max_images`개)를 `classify_prompt`와 함께 `vision_url`로 보냅니다.
+3. 각 이미지(최대 `max_images`개)를 `classify_prompt`(`deny_prompts` / `allow_prompts`)와 함께 `vision_url`로 보냅니다.
 4. 모델 응답에서 `VERDICT: ALLOW` / `VERDICT: DENY`를 파싱합니다 (마지막 매칭 우선).
 
 판정 규칙:
@@ -34,7 +34,7 @@ AI Vision Guard는 OpenAI 호환 비전 모델로 멀티모달 채팅의 이미�
 ## 권장 사항
 
 - 같은 Route에서 **텍스트** 반출·jailbreak 패턴은 AI Prompt Guard, **이미지**는 Vision Guard로 나눕니다.
-- `classify_prompt`는 짧게 두고 `VERDICT: ALLOW` / `VERDICT: DENY`로 끝내 파싱이 안정적으로 되게 합니다.
+- `classify_prompt.deny_prompts` / `allow_prompts`는 구체적으로 둡니다. `VERDICT:` suffix는 플러그인이 고정합니다.
 - 분류 누락이 비전 endpoint 단기 장애보다 위험하면 `fail_open: false`를 유지합니다.
 - 데모에서는 파일명이 아니라 픽셀을 보도록 `data:image/...;base64,...` URL을 권장합니다.
 
@@ -44,7 +44,7 @@ AI Vision Guard는 OpenAI 호환 비전 모델로 멀티모달 채팅의 이미�
 
 ```bash
 # 이 저장소 루트에서
-luarocks make ai-vision-guard-0.1.0-1.rockspec
+luarocks make ai-vision-guard-0.2.0-1.rockspec
 ```
 
 또는 `kong/plugins/ai-vision-guard/`를 Kong Lua 경로에 복사합니다. 예:
@@ -124,87 +124,44 @@ deck gateway sync deck.yaml
 
 ## `classify_prompt` 예시
 
-모델 응답은 반드시 `VERDICT: DENY` 또는 `VERDICT: ALLOW`로 끝나야 합니다. DENY/ALLOW 기준을 구체적으로 적어 마케팅·일반 UI 스크린샷이 과도하게 차단되지 않게 합니다.
+`classify_prompt`는 [AI Semantic Prompt Guard](https://developer.konghq.com/plugins/ai-semantic-prompt-guard/)처럼 `deny_prompts` / `allow_prompts`만 설정합니다. preamble, intro, `VERDICT:` suffix는 플러그인이 고정합니다.
 
 ### 1. 반도체 / 칩 IP (플러그인 기본값)
 
-```text
-You are an export-control image classifier for semiconductor IP.
-
-DENY if the image shows proprietary chip design artifacts, including:
-- chip / SoC / IC floorplan or layout (CAD geometry on dark background)
-- VLSI / GDS-style metal layers, blocks, interconnects
-- EDA / floorplanner UI screenshots that display SoC blocks and wiring
-- hardware schematic of chip IP meant for engineering export
-
-ALLOW for everything else, including landscape, wallpaper, ordinary photos,
-and marketing graphics about semiconductors that are not CAD/EDA layouts.
-
-Be brief. End with exactly: VERDICT: DENY  or  VERDICT: ALLOW
+```yaml
+classify_prompt:
+  deny_prompts:
+    - chip / SoC / IC floorplan or layout (CAD geometry on dark background)
+    - VLSI / GDS-style metal layers, blocks, interconnects
+    - EDA / floorplanner UI screenshots that display SoC blocks and wiring
+    - hardware schematic of chip IP meant for engineering export
+  allow_prompts:
+    - landscape, wallpaper, nature, ordinary photos
+    - marketing banners, infographics, icons, slides about semiconductors
+    - factory illustrations that are NOT chip CAD layouts or EDA floorplan screens
 ```
 
 ### 2. 신분증·얼굴 사진 (개인정보)
 
-```text
-You classify images for privacy compliance.
-
-DENY if the image primarily shows:
-- government ID, passport, driver's license, or similar identity documents
-- clear close-up face photos suitable for biometric identification
-- credit/debit cards with visible PAN or CVV
-
-ALLOW ordinary scenes, product photos, memes, and documents without identity data.
-
-Be brief. End with exactly: VERDICT: DENY  or  VERDICT: ALLOW
+```yaml
+classify_prompt:
+  deny_prompts:
+    - government ID, passport, driver's license, or similar identity documents
+    - clear close-up face photos suitable for biometric identification
+    - credit/debit cards with visible PAN or CVV
+  allow_prompts:
+    - ordinary scenes, product photos, memes, and documents without identity data
 ```
 
-### 3. 사내·기밀 화면 (DLP)
-
-```text
-You classify screenshots for data-loss prevention.
-
-DENY if the image shows:
-- internal admin consoles, CRM, ERP, or ticketing UIs with customer records
-- source code, config, or secrets (API keys, tokens, connection strings)
-- confidential slide decks or documents marked Internal / Confidential / Secret
-
-ALLOW public marketing sites, generic UI mockups without real data, and photos of people or places.
-
-Be brief. End with exactly: VERDICT: DENY  or  VERDICT: ALLOW
-```
-
-### 4. 유해·NSFW 콘텐츠
-
-```text
-You are a safety classifier for user-uploaded images.
-
-DENY if the image contains sexual content, nudity, graphic violence, or clear self-harm imagery.
-
-ALLOW safe everyday photos, illustrations, charts, and screenshots.
-
-Be brief. End with exactly: VERDICT: DENY  or  VERDICT: ALLOW
-```
-
-### 5. 화이트보드·손글씨는 허용, 양산 CAD만 차단
-
-```text
-You classify images in an engineering chat assistant.
-
-DENY only if the image is a production chip CAD floorplan, GDS-style layout, or EDA tool screenshot of SoC blocks.
-
-ALLOW whiteboard photos, handwritten notes, architecture diagrams, sequence charts, and product photos.
-
-Be brief. End with exactly: VERDICT: DENY  or  VERDICT: ALLOW
-```
-
-decK에서는 multiline string으로 넣습니다.
+decK:
 
 ```yaml
 config:
-  classify_prompt: |
-    You classify screenshots for data-loss prevention.
-    ...
-    Be brief. End with exactly: VERDICT: DENY  or  VERDICT: ALLOW
+  classify_prompt:
+    deny_prompts:
+      - internal admin consoles with customer records
+    allow_prompts:
+      - public marketing sites without real data
 ```
 
 ## 설정
@@ -216,7 +173,7 @@ config:
 | `vision_model`             | 비전 / 멀티모달 모델 id                       |
 | `vision_auth_header_name`  | 인증 헤더 이름 (기본 `Authorization`)         |
 | `vision_auth_header_value` | 전체 인증 값, 예: `Bearer <token>`          |
-| `classify_prompt`          | 분류 지시문 (기본: 반도체 IP export-control)    |
+| `classify_prompt`          | `deny_prompts`, `allow_prompts`만 설정 (preamble·intro·VERDICT suffix는 플러그인 고정) |
 | `max_images`               | 분류할 `image_url` 최대 개수 (하나라도 DENY면 차단) |
 | `skip_if_no_image`         | 이미지 없으면 통과 (기본 `true`)                |
 | `fail_open`                | 비전 호출 실패 시 통과 (기본 `false`)            |

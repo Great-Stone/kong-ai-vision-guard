@@ -12,7 +12,7 @@ On each request the plugin:
 
 1. Reads the JSON chat body and collects `image_url` parts from `messages`.
 2. If there are no images and `skip_if_no_image` is `true`, the request continues unchanged.
-3. Sends each image (up to `max_images`) to `vision_url` with `classify_prompt`.
+3. Sends each image (up to `max_images`) to `vision_url` with `classify_prompt` (`deny_prompts` / `allow_prompts`).
 4. Parses the model reply for `VERDICT: ALLOW` or `VERDICT: DENY` (last match wins).
 
 Matching behavior:
@@ -32,7 +32,7 @@ Response headers (when a decision is made):
 ## Best practices
 
 - Pair with AI Prompt Guard for **text** export or jailbreak patterns on the same route; use Vision Guard only for images.
-- Keep `classify_prompt` short and end with an explicit `VERDICT: ALLOW` / `VERDICT: DENY` line so parsing stays reliable.
+- Keep `classify_prompt.deny_prompts` / `allow_prompts` concrete; the plugin adds a fixed `VERDICT:` suffix for reliable parsing.
 - Set `fail_open: false` when a missed classification is worse than a brief outage of the vision endpoint.
 - Prefer `data:image/...;base64,...` image URLs in demos so the vision model sees pixels, not filenames.
 
@@ -42,7 +42,7 @@ Response headers (when a decision is made):
 
 ```bash
 # From this repository root
-luarocks make ai-vision-guard-0.1.0-1.rockspec
+luarocks make ai-vision-guard-0.2.0-1.rockspec
 ```
 
 Or copy `kong/plugins/ai-vision-guard/` into Kong’s Lua path, for example:
@@ -122,87 +122,57 @@ Optional: add [AI Prompt Guard](https://developer.konghq.com/plugins/ai-prompt-g
 
 ## `classify_prompt` examples
 
-The model must end with exactly `VERDICT: DENY` or `VERDICT: ALLOW`. Keep DENY/ALLOW criteria concrete so the vision model does not over-block marketing or UI screenshots.
+`classify_prompt` mirrors [AI Semantic Prompt Guard](https://developer.konghq.com/plugins/ai-semantic-prompt-guard/): set `deny_prompts` and `allow_prompts` only. The plugin adds a fixed preamble, section intros, and `VERDICT:` suffix.
 
 ### 1. Semiconductor / chip IP (plugin default)
 
-```text
-You are an export-control image classifier for semiconductor IP.
-
-DENY if the image shows proprietary chip design artifacts, including:
-- chip / SoC / IC floorplan or layout (CAD geometry on dark background)
-- VLSI / GDS-style metal layers, blocks, interconnects
-- EDA / floorplanner UI screenshots that display SoC blocks and wiring
-- hardware schematic of chip IP meant for engineering export
-
-ALLOW for everything else, including landscape, wallpaper, ordinary photos,
-and marketing graphics about semiconductors that are not CAD/EDA layouts.
-
-Be brief. End with exactly: VERDICT: DENY  or  VERDICT: ALLOW
+```yaml
+classify_prompt:
+  deny_prompts:
+    - chip / SoC / IC floorplan or layout (CAD geometry on dark background)
+    - VLSI / GDS-style metal layers, blocks, interconnects
+    - EDA / floorplanner UI screenshots that display SoC blocks and wiring
+    - hardware schematic of chip IP meant for engineering export
+  allow_prompts:
+    - landscape, wallpaper, nature, ordinary photos
+    - marketing banners, infographics, icons, slides about semiconductors
+    - factory illustrations that are NOT chip CAD layouts or EDA floorplan screens
 ```
 
 ### 2. Identity documents and face photos
 
-```text
-You classify images for privacy compliance.
-
-DENY if the image primarily shows:
-- government ID, passport, driver's license, or similar identity documents
-- clear close-up face photos suitable for biometric identification
-- credit/debit cards with visible PAN or CVV
-
-ALLOW ordinary scenes, product photos, memes, and documents without identity data.
-
-Be brief. End with exactly: VERDICT: DENY  or  VERDICT: ALLOW
+```yaml
+classify_prompt:
+  deny_prompts:
+    - government ID, passport, driver's license, or similar identity documents
+    - clear close-up face photos suitable for biometric identification
+    - credit/debit cards with visible PAN or CVV
+  allow_prompts:
+    - ordinary scenes, product photos, memes, and documents without identity data
 ```
 
 ### 3. Internal / confidential screens
 
-```text
-You classify screenshots for data-loss prevention.
-
-DENY if the image shows:
-- internal admin consoles, CRM, ERP, or ticketing UIs with customer records
-- source code, config, or secrets (API keys, tokens, connection strings)
-- confidential slide decks or documents marked Internal / Confidential / Secret
-
-ALLOW public marketing sites, generic UI mockups without real data, and photos of people or places.
-
-Be brief. End with exactly: VERDICT: DENY  or  VERDICT: ALLOW
+```yaml
+classify_prompt:
+  deny_prompts:
+    - internal admin consoles, CRM, ERP, or ticketing UIs with customer records
+    - source code, config, or secrets (API keys, tokens, connection strings)
+    - confidential slide decks or documents marked Internal / Confidential / Secret
+  allow_prompts:
+    - public marketing sites, generic UI mockups without real data
+    - photos of people or places
 ```
 
-### 4. Unsafe / NSFW content
-
-```text
-You are a safety classifier for user-uploaded images.
-
-DENY if the image contains sexual content, nudity, graphic violence, or clear self-harm imagery.
-
-ALLOW safe everyday photos, illustrations, charts, and screenshots.
-
-Be brief. End with exactly: VERDICT: DENY  or  VERDICT: ALLOW
-```
-
-### 5. Handwritten notes and whiteboard photos (allow design discussion)
-
-```text
-You classify images in an engineering chat assistant.
-
-DENY only if the image is a production chip CAD floorplan, GDS-style layout, or EDA tool screenshot of SoC blocks.
-
-ALLOW whiteboard photos, handwritten notes, architecture diagrams, sequence charts, and product photos.
-
-Be brief. End with exactly: VERDICT: DENY  or  VERDICT: ALLOW
-```
-
-In decK, set the field as a multiline string:
+In decK:
 
 ```yaml
 config:
-  classify_prompt: |
-    You classify screenshots for data-loss prevention.
-    ...
-    Be brief. End with exactly: VERDICT: DENY  or  VERDICT: ALLOW
+  classify_prompt:
+    deny_prompts:
+      - internal admin consoles with customer records
+    allow_prompts:
+      - public marketing sites without real data
 ```
 
 ## Configuration
@@ -213,7 +183,7 @@ config:
 | `vision_model` | Vision / multimodal model id |
 | `vision_auth_header_name` | Auth header name (default `Authorization`) |
 | `vision_auth_header_value` | Full auth value, for example `Bearer <token>` |
-| `classify_prompt` | Classification instructions (default: semiconductor IP export-control) |
+| `classify_prompt` | `deny_prompts`, `allow_prompts` only (preamble, intros, VERDICT suffix are fixed) |
 | `max_images` | Max `image_url` parts to classify (any DENY wins) |
 | `skip_if_no_image` | Pass through when there are no images (default `true`) |
 | `fail_open` | Allow traffic if the vision call fails (default `false`) |

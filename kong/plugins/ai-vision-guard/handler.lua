@@ -2,7 +2,7 @@ local classify = require "kong.plugins.ai-vision-guard.classify"
 
 local AiVisionGuardHandler = {
   PRIORITY = 775,
-  VERSION = "0.1.0",
+  VERSION = "0.2.0",
 }
 
 local function set_ctx(decision, model, reason)
@@ -24,6 +24,7 @@ local function deny_exit(conf, verdict)
   }, {
     ["X-Vision-Guard-Decision"] = "DENY",
     ["X-Vision-Guard-Model"] = tostring(verdict.model or ""),
+    ["X-Vision-Guard-Reason"] = tostring(verdict.reason or ""):gsub("[\r\n]+", " "):sub(1, 200),
   })
 end
 
@@ -52,7 +53,11 @@ function AiVisionGuardHandler:access(conf)
     return error_exit(conf, err or "invalid request body", conf.vision_model)
   end
 
-  local uris = classify.extract_image_uris(body.messages)
+  local only_last = conf.only_last_user_images
+  if only_last == nil then
+    only_last = true
+  end
+  local uris = classify.extract_image_uris(body.messages, { only_last_user = only_last })
   if #uris == 0 then
     if conf.skip_if_no_image then
       return
@@ -82,6 +87,12 @@ function AiVisionGuardHandler:header_filter(_)
   kong.response.set_header("X-Vision-Guard-Decision", decision)
   if kong.ctx.plugin.model then
     kong.response.set_header("X-Vision-Guard-Model", kong.ctx.plugin.model)
+  end
+  local reason = kong.ctx.plugin.reason
+  if reason and reason ~= "" then
+    -- single-line header for debugging LibreChat (no newlines)
+    local one = tostring(reason):gsub("[\r\n]+", " "):sub(1, 200)
+    kong.response.set_header("X-Vision-Guard-Reason", one)
   end
 end
 
